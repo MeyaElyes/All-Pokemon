@@ -3,14 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokémon Directory</title>
+    <title>Pokemon Directory</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
-        <h1>Pokémon Directory</h1>
+        <h1>Pokemon Directory</h1>
         
         <div class="controls">
+            <div class="filter-group search-group">
+                <label for="searchInput">Search:</label>
+                <input
+                    type="text"
+                    id="searchInput"
+                    placeholder="Search by name, type, ability, or #id"
+                    aria-label="Search Pokemon"
+                    autocomplete="off"
+                />
+            </div>
             <div class="filter-group">
                 <label for="typeFilter">Filter by Type:</label>
                 <select id="typeFilter">
@@ -50,7 +60,7 @@
             
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p>Loading Pokémon data... <span id="loadingProgress">0/1025</span></p>
+                <p>Loading Pokemon data... <span id="loadingProgress">0/1025</span></p>
             </div>
         </div>
 

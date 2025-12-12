@@ -35,6 +35,14 @@ h1 {
     align-items: center;
     flex-wrap: wrap;
     gap: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: saturate(120%) blur(6px);
+    border-radius: 12px;
+    padding: 10px 12px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
 }
 
 .filter-group {
@@ -49,10 +57,11 @@ h1 {
 }
 
 #sortFilter,
-#typeFilter {
+#typeFilter,
+#searchInput {
     padding: 10px 15px;
     border: 2px solid #667eea;
-    border-radius: 8px;
+    border-radius: 9999px;
     font-size: 14px;
     cursor: pointer;
     background: white;
@@ -61,16 +70,27 @@ h1 {
 }
 
 #sortFilter:hover,
-#typeFilter:hover {
+#typeFilter:hover,
+#searchInput:hover {
     border-color: #764ba2;
     box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 }
 
 #sortFilter:focus,
-#typeFilter:focus {
+#typeFilter:focus,
+#searchInput:focus {
     outline: none;
     border-color: #764ba2;
     box-shadow: 0 2px 8px rgba(102, 126, 234, 0.5);
+}
+
+#searchInput {
+    min-width: 280px;
+}
+
+.search-group label {
+    font-weight: 600;
+    color: #555;
 }
 
 .loading {
@@ -351,7 +371,17 @@ tbody tr {
 
     .controls {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
+        gap: 12px;
+        padding: 10px 10px 14px;
+        margin: -10px -10px 10px; /* keep sticky edge-to-edge */
+        border-radius: 12px;
+    }
+
+    #searchInput {
+        width: 100%;
+        min-width: 0;
+        font-size: 16px; /* prevent iOS zoom */
     }
 
     table {
@@ -365,6 +395,21 @@ tbody tr {
     .pokemon-image {
         width: 60px;
         height: 60px;
+    }
+
+    /* Reduce hover transform on touch to avoid jank */
+    tbody tr:hover {
+        transform: none;
+        box-shadow: none;
+    }
+
+    /* Truncate long descriptions for readability */
+    .description {
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        max-width: none;
     }
 
     .modal-content {

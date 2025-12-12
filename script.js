@@ -2,6 +2,7 @@
 let allPokemon = [];
 let currentSort = 'alphabetic';
 let currentTypeFilter = 'all';
+let currentSearch = '';
 
 // DOM elements
 const tableBody = document.getElementById('pokemonTableBody');
@@ -12,6 +13,141 @@ const loadingProgress = document.getElementById('loadingProgress');
 const modal = document.getElementById('pokemonModal');
 const modalBody = document.getElementById('modalBody');
 const closeBtn = document.querySelector('.close');
+const searchInput = document.getElementById('searchInput');
+
+// Simple debounce to keep typing smooth
+function debounce(fn, delay = 250) {
+    let t;
+    return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(null, args), delay);
+    };
+}
+
+// Normalize a string for matching (lowercase, alphanumerics only)
+function normalize(str) {
+    return (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Check if `needle` is a subsequence of `hay` (characters in order, not necessarily contiguous)
+function isSubsequence(needle, hay) {
+    let i = 0, j = 0;
+    while (i < needle.length && j < hay.length) {
+        if (needle[i] === hay[j]) i++;
+        j++;
+    }
+    return i === needle.length;
+}
+
+// Fuzzy match helper across multiple fields
+function fuzzyMatch(term, fields) {
+    const n = normalize(term);
+    if (!n) return true;
+    return fields.some(f => isSubsequence(n, normalize(f)));
+}
+
+// Score a single field for relevance: lower is better
+function fuzzyScore(term, text) {
+    const t = normalize(term);
+    const x = normalize(text);
+    if (!t) return Number.POSITIVE_INFINITY;
+    if (!x) return Number.POSITIVE_INFINITY;
+    if (x === t) return 0; // exact
+    if (x.startsWith(t)) return 2; // starts-with
+    const idx = x.indexOf(t);
+    if (idx !== -1) return 10 + idx; // substring (earlier is better)
+    if (isSubsequence(t, x)) {
+        // Penalize gaps between matched chars
+        let i = 0, j = 0, last = -1, gaps = 0;
+        while (i < t.length && j < x.length) {
+            if (t[i] === x[j]) {
+                if (last >= 0) gaps += (j - last - 1);
+                last = j;
+                i++;
+            }
+            j++;
+        }
+        return 100 + gaps;
+    }
+    return Number.POSITIVE_INFINITY;
+}
+
+function getPokemonSearchScore(term, p) {
+    const idStr = String(p.id).padStart(3, '0');
+    const name = p.name;
+    const types = p.types.join(' ');
+    const abilities = p.abilities.join(' ');
+    return Math.min(
+        fuzzyScore(term, name),
+        fuzzyScore(term, idStr),
+        fuzzyScore(term, types),
+        fuzzyScore(term, abilities)
+    );
+}
+
+// Parse advanced query syntax with sticky fields
+// Tokens separated by spaces. Field prefixes:
+//   no prefix -> name/id
+//   :term     -> type term
+//   ::term    -> ability term
+// Unprefixed tokens inherit the last specified field (sticky),
+// starting with 'name' as default.
+function parseSearchQuery(q) {
+    const tokens = q.trim().split(/\s+/).filter(Boolean);
+    const nameTerms = [];
+    const typeTerms = [];
+    const abilityTerms = [];
+    let mode = 'name';
+    for (const raw of tokens) {
+        if (raw.startsWith('::')) {
+            const t = raw.slice(2);
+            if (t) abilityTerms.push(t);
+            mode = 'ability';
+        } else if (raw.startsWith(':')) {
+            const t = raw.slice(1);
+            if (t) typeTerms.push(t);
+            mode = 'type';
+        } else {
+            if (mode === 'ability') abilityTerms.push(raw);
+            else if (mode === 'type') typeTerms.push(raw);
+            else nameTerms.push(raw);
+        }
+    }
+    return { nameTerms, typeTerms, abilityTerms };
+}
+
+// Ensure a Pokemon matches all terms (AND semantics by field)
+function matchesTerms(p, terms) {
+    const idStr = String(p.id).padStart(3, '0');
+    // name/id terms
+    const okName = terms.nameTerms.every(t => {
+        const sn = fuzzyScore(t, p.name);
+        const si = fuzzyScore(t, idStr);
+        return Math.min(sn, si) !== Number.POSITIVE_INFINITY;
+    });
+    if (!okName) return false;
+    // type terms
+    const okType = terms.typeTerms.every(t => p.types.some(tp => fuzzyScore(t, tp) !== Number.POSITIVE_INFINITY));
+    if (!okType) return false;
+    // ability terms
+    const okAbility = terms.abilityTerms.every(t => p.abilities.some(ab => fuzzyScore(t, ab) !== Number.POSITIVE_INFINITY));
+    if (!okAbility) return false;
+    return true;
+}
+
+// Compute relevance scores to sort matches (favor name matches)
+function computeMatchScores(p, terms) {
+    const idStr = String(p.id).padStart(3, '0');
+    const sumMin = (list, candidates) => list.reduce((acc, t) => {
+        let best = Number.POSITIVE_INFINITY;
+        for (const c of candidates) best = Math.min(best, fuzzyScore(t, c));
+        return acc + best;
+    }, 0);
+    const nameScore = sumMin(terms.nameTerms, [p.name, idStr]);
+    const typeScore = sumMin(terms.typeTerms, p.types);
+    const abilityScore = sumMin(terms.abilityTerms, p.abilities);
+    return { nameScore, typeScore, abilityScore };
+}
 
 // Generate unique color for each ability
 function getAbilityColor(ability) {
@@ -224,8 +360,30 @@ function displayPokemon() {
         );
     }
     
-    // Sort Pokemon
-    const sortedPokemon = sortPokemon(filteredPokemon);
+    // Filter by single fuzzy search term across name, id, types, abilities
+    const term = currentSearch.trim();
+    let sortedPokemon;
+    if (term) {
+        const list = filteredPokemon.filter(p =>
+            fuzzyMatch(term, [
+                p.name,
+                String(p.id).padStart(3, '0'),
+                p.types.join(' '),
+                p.abilities.join(' ')
+            ])
+        );
+        sortedPokemon = list.sort((a, b) => {
+            const sa = getPokemonSearchScore(term, a);
+            const sb = getPokemonSearchScore(term, b);
+            if (sa !== sb) return sa - sb;
+            // tie-break by selected sort, then name
+            const [a1, b1] = sortPokemon([a, b]);
+            if (a1 !== b1) return a1 === a ? -1 : 1;
+            return a.name.localeCompare(b.name);
+        });
+    } else {
+        sortedPokemon = sortPokemon(filteredPokemon);
+    }
     
     // Create table rows
     sortedPokemon.forEach(pokemon => {
@@ -270,6 +428,15 @@ typeFilter.addEventListener('change', (e) => {
     currentTypeFilter = e.target.value;
     displayPokemon();
 });
+
+// Event listener for search input
+if (searchInput) {
+    const onSearch = debounce((e) => {
+        currentSearch = e.target.value;
+        displayPokemon();
+    }, 200);
+    searchInput.addEventListener('input', onSearch);
+}
 
 // Modal event listeners
 closeBtn.addEventListener('click', () => {
