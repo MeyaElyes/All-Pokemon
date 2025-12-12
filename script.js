@@ -14,6 +14,12 @@ const modal = document.getElementById('pokemonModal');
 const modalBody = document.getElementById('modalBody');
 const closeBtn = document.querySelector('.close');
 const searchInput = document.getElementById('searchInput');
+const abilityModal = document.getElementById('abilityModal');
+const abilityModalBody = document.getElementById('abilityModalBody');
+const abilityCloseBtn = document.querySelector('.ability-close');
+
+// Cache for ability details to avoid refetching
+const abilityCache = new Map();
 
 // Simple debounce to keep typing smooth
 function debounce(fn, delay = 250) {
@@ -83,6 +89,98 @@ function getPokemonSearchScore(term, p) {
         fuzzyScore(term, types),
         fuzzyScore(term, abilities)
     );
+}
+
+// Fetch ability details (cached)
+async function fetchAbilityDetails(abilityName) {
+    const key = abilityName.toLowerCase();
+    if (abilityCache.has(key)) return abilityCache.get(key);
+    try {
+        const res = await fetch(`https://pokeapi.co/api/v2/ability/${encodeURIComponent(key)}`);
+        if (!res.ok) throw new Error('Failed to fetch ability');
+        const data = await res.json();
+        const effectEntry = (data.effect_entries || []).find(e => e.language?.name === 'en');
+        const flavorEntry = (data.flavor_text_entries || []).find(e => e.language?.name === 'en');
+        const details = {
+            name: data.name,
+            shortEffect: effectEntry?.short_effect || 'No short effect available.',
+            effect: effectEntry?.effect || 'No detailed effect available.',
+            flavor: flavorEntry?.flavor_text?.replace(/\f/g, ' ') || '',
+            generation: data.generation?.name?.replace('-', ' ') || ''
+        };
+        abilityCache.set(key, details);
+        return details;
+    } catch (err) {
+        console.error('Ability fetch error:', err);
+        return { name: abilityName, shortEffect: 'Unable to load details right now.', effect: '', flavor: '', generation: '' };
+    }
+}
+
+function toTitle(s) {
+    return (s || '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Format generation like "generation-iii" -> "Generation III"
+function formatGeneration(genName) {
+    if (!genName) return '';
+    const norm = String(genName).toLowerCase().replace(/_/g, '-').replace(/\s+/g, ' ');
+    const m = norm.match(/generation[-\s]?([ivx]+)/);
+    if (m) return `Generation ${m[1].toUpperCase()}`;
+    // Fallback: title case but keep roman numerals uppercase
+    return toTitle(genName).replace(/\b(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gi, s => s.toUpperCase());
+}
+
+async function showAbilityDetails(abilityName) {
+    const info = await fetchAbilityDetails(abilityName);
+    abilityModalBody.innerHTML = `
+        <div class="modal-header">
+            <h2 class="modal-pokemon-name">${toTitle(info.name)}</h2>
+            ${info.generation ? `<div class=\"modal-pokemon-id\">${formatGeneration(info.generation)}</div>` : ''}
+        </div>
+
+        <div class="modal-section">
+            <h3>Effect</h3>
+            <p>${info.effect || info.shortEffect}</p>
+        </div>
+    `;
+    abilityModal.style.display = 'block';
+}
+
+// Update ability badge hover tooltip with short effect (async)
+async function updateAbilityBadgeTooltip(badge, abilityName) {
+    if (badge.dataset.tooltipLoaded) return;
+    const info = await fetchAbilityDetails(abilityName);
+    badge.dataset.shortEffect = info.shortEffect;
+    badge.dataset.tooltipLoaded = 'true';
+}
+
+// Show custom tooltip on badge hover
+function showAbilityTooltip(badge, event) {
+    const shortEffect = badge.dataset.shortEffect;
+    if (!shortEffect) return;
+    
+    // Remove existing tooltip
+    const existing = document.querySelector('.ability-tooltip');
+    if (existing) existing.remove();
+    
+    // Create tooltip
+    const tooltip = document.createElement('div');
+    tooltip.className = 'ability-tooltip';
+    tooltip.textContent = shortEffect;
+    document.body.appendChild(tooltip);
+    
+    // Position tooltip above badge
+    const rect = badge.getBoundingClientRect();
+    tooltip.style.left = (rect.left + rect.width / 2 - tooltip.offsetWidth / 2) + 'px';
+    tooltip.style.top = (rect.top - tooltip.offsetHeight - 12) + 'px';
+    
+    badge.dataset.tooltipShown = 'true';
+}
+
+// Hide custom tooltip
+function hideAbilityTooltip() {
+    const tooltip = document.querySelector('.ability-tooltip');
+    if (tooltip) tooltip.remove();
 }
 
 // Parse advanced query syntax with sticky fields
@@ -301,7 +399,7 @@ function showPokemonDetails(pokemon) {
     ).join('');
 
     const abilitiesHtml = pokemon.abilities.map(ability => 
-        `<span class="ability-badge" style="background: ${getAbilityColor(ability)};">${ability}</span>`
+        `<span class="ability-badge" data-ability="${ability}" style="background: ${getAbilityColor(ability)};">${ability}</span>`
     ).join(' ');
 
     modalBody.innerHTML = `
@@ -403,7 +501,7 @@ function displayPokemon() {
             <td>
                 <div class="abilities">
                     ${pokemon.abilities.map(ability => 
-                        `<span class="ability-badge" style="background: ${getAbilityColor(ability)};">${ability}</span>`
+                        `<span class="ability-badge" data-ability="${ability}" style="background: ${getAbilityColor(ability)};">${ability}</span>`
                     ).join('')}
                 </div>
             </td>
@@ -443,11 +541,81 @@ closeBtn.addEventListener('click', () => {
     modal.style.display = 'none';
 });
 
+abilityCloseBtn.addEventListener('click', () => {
+    abilityModal.style.display = 'none';
+});
+
 window.addEventListener('click', (e) => {
     if (e.target === modal) {
         modal.style.display = 'none';
     }
+    if (e.target === abilityModal) {
+        abilityModal.style.display = 'none';
+    }
 });
+
+// Ability badge click handling (table)
+tableBody.addEventListener('click', (e) => {
+    const badge = e.target.closest('.ability-badge');
+    if (badge) {
+        e.stopPropagation();
+        const ability = badge.dataset.ability;
+        if (ability) showAbilityDetails(ability);
+    }
+});
+
+// Ability badge hover to show short effect (table)
+tableBody.addEventListener('mouseenter', async (e) => {
+    const badge = e.target.closest('.ability-badge');
+    if (badge) {
+        const ability = badge.dataset.ability;
+        if (ability) {
+            await updateAbilityBadgeTooltip(badge, ability);
+            showAbilityTooltip(badge, e);
+        }
+    }
+}, true);
+
+// Hide tooltip on mouse leave
+tableBody.addEventListener('mouseleave', (e) => {
+    const badge = e.target.closest('.ability-badge');
+    if (badge) hideAbilityTooltip();
+}, true);
+
+// Ability badge click handling (inside Pokemon modal)
+modalBody.addEventListener('click', async (e) => {
+    const badge = e.target.closest('.ability-badge');
+    if (badge) {
+        e.stopPropagation();
+        const ability = badge.dataset.ability;
+        if (ability) {
+            // First, load tooltip if not already loaded
+            if (!badge.dataset.tooltipLoaded) {
+                await updateAbilityBadgeTooltip(badge, ability);
+            }
+            // Show tooltip on click
+            showAbilityTooltip(badge, e);
+        }
+    }
+});
+
+// Ability badge hover to show short effect (modal)
+modalBody.addEventListener('mouseenter', async (e) => {
+    const badge = e.target.closest('.ability-badge');
+    if (badge) {
+        const ability = badge.dataset.ability;
+        if (ability) {
+            await updateAbilityBadgeTooltip(badge, ability);
+            showAbilityTooltip(badge, e);
+        }
+    }
+}, true);
+
+// Hide tooltip on mouse leave (modal)
+modalBody.addEventListener('mouseleave', (e) => {
+    const badge = e.target.closest('.ability-badge');
+    if (badge) hideAbilityTooltip();
+}, true);
 
 // Initialize the app
 fetchPokemonData();
